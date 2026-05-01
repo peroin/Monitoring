@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClickPulse — Real-time Visitor Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: { extend: { fontFamily: { sans: ['Space Grotesk', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] } } }
+        }
+    </script>
+    <style>
+        :root {
+            --bg-primary: #080c0a;
+            --bg-secondary: #0f1713;
+            --bg-card: #131e18;
+            --border: #1c3127;
+            --accent: #00e68a;
+            --accent-dim: #00b36b;
+            --accent-glow: rgba(0,230,138,0.12);
+            --text-primary: #e4f2ea;
+            --text-secondary: #6d9880;
+            --text-muted: #3f6652;
+            --danger: #ff5c5c;
+            --warning: #ffb347;
+            --info: #47c8ff;
+            --purple: #a78bfa;
+        }
+        * { box-sizing: border-box; }
+        body { background: var(--bg-primary); color: var(--text-primary); font-family: 'Space Grotesk', sans-serif; min-height: 100vh; overflow-x: hidden; }
+        body::before { content:''; position:fixed; top:-200px; right:-100px; width:600px; height:600px; background:radial-gradient(circle,rgba(0,230,138,0.05) 0%,transparent 70%); pointer-events:none; z-index:0; }
+
+        .glass-card { background:linear-gradient(145deg,rgba(19,30,24,0.95),rgba(15,23,19,0.98)); border:1px solid var(--border); backdrop-filter:blur(8px); border-radius:14px; transition:border-color 0.3s,box-shadow 0.3s; }
+        .glass-card:hover { border-color:rgba(0,230,138,0.15); box-shadow:0 0 40px rgba(0,230,138,0.02); }
+
+        .stat-card { position:relative; overflow:hidden; }
+        .stat-card::after { content:''; position:absolute; top:0; left:0; width:100%; height:3px; border-radius:14px 14px 0 0; }
+        .stat-card.c-green::after { background:var(--accent); }
+        .stat-card.c-blue::after { background:var(--info); }
+        .stat-card.c-orange::after { background:var(--warning); }
+        .stat-card.c-purple::after { background:var(--purple); }
+
+        .pulse-dot { width:8px; height:8px; border-radius:50%; background:var(--accent); position:relative; }
+        .pulse-dot::after { content:''; position:absolute; inset:-4px; border-radius:50%; border:2px solid var(--accent); animation:pulse-ring 2s infinite; }
+        @keyframes pulse-ring { 0%{transform:scale(0.8);opacity:1;} 100%{transform:scale(2.2);opacity:0;} }
+
+        .live-badge { display:inline-flex; align-items:center; gap:8px; padding:5px 14px; background:rgba(0,230,138,0.08); border:1px solid rgba(0,230,138,0.2); border-radius:20px; font-size:11px; font-weight:700; color:var(--accent); letter-spacing:1px; text-transform:uppercase; }
+        .conn-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:16px; font-size:10px; font-weight:600; letter-spacing:0.5px; }
+        .conn-badge.ok { background:rgba(0,230,138,0.08); border:1px solid rgba(0,230,138,0.2); color:var(--accent); }
+        .conn-badge.off { background:rgba(255,92,92,0.08); border:1px solid rgba(255,92,92,0.2); color:var(--danger); }
+        .conn-badge.retry { background:rgba(255,179,71,0.08); border:1px solid rgba(255,179,71,0.2); color:var(--warning); }
+
+        .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent-dim)); color:#080c0a; font-weight:700; padding:10px 20px; border-radius:10px; border:none; cursor:pointer; transition:transform 0.15s,box-shadow 0.3s; font-family:inherit; font-size:13px; }
+        .btn-primary:hover { transform:translateY(-1px); box-shadow:0 6px 24px rgba(0,230,138,0.25); }
+        .btn-primary:disabled { opacity:0.4; cursor:not-allowed; transform:none; box-shadow:none; }
+        .btn-ghost { background:transparent; color:var(--text-secondary); border:1px solid var(--border); padding:9px 18px; border-radius:10px; cursor:pointer; transition:border-color 0.2s,color 0.2s,background 0.2s; font-family:inherit; font-size:13px; }
+        .btn-ghost:hover { border-color:var(--accent); color:var(--accent); background:rgba(0,230,138,0.04); }
+        .btn-icon { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; border:none; cursor:pointer; font-size:12px; transition:background 0.2s,color 0.2s; background:transparent; color:var(--text-muted); }
+        .btn-icon:hover { background:rgba(255,255,255,0.05); color:var(--text-primary); }
+        .btn-icon.danger:hover { background:rgba(255,92,92,0.1); color:var(--danger); }
+
+        .input-field { background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary); padding:10px 14px; border-radius:10px; font-family:inherit; font-size:13px; outline:none; transition:border-color 0.2s,box-shadow 0.2s; width:100%; }
+        .input-field:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+        .input-field::placeholder { color:var(--text-muted); }
+
+        .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.75); backdrop-filter:blur(6px); z-index:100; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 0.3s; }
+        .modal-overlay.active { opacity:1; pointer-events:all; }
+        .modal-box { background:var(--bg-secondary); border:1px solid var(--border); border-radius:18px; padding:28px; width:90%; max-width:540px; transform:translateY(16px) scale(0.97); transition:transform 0.3s; max-height:90vh; overflow-y:auto; }
+        .modal-overlay.active .modal-box { transform:translateY(0) scale(1); }
+
+        .toast-wrap { position:fixed; top:20px; right:20px; z-index:200; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+        .toast { padding:12px 18px; border-radius:10px; font-size:13px; font-weight:500; display:flex; align-items:center; gap:10px; animation:t-in 0.35s ease; border:1px solid; pointer-events:auto; max-width:380px; }
+        .toast.success { background:rgba(0,230,138,0.1); border-color:rgba(0,230,138,0.25); color:var(--accent); }
+        .toast.error { background:rgba(255,92,92,0.1); border-color:rgba(255,92,92,0.25); color:var(--danger); }
+        .toast.info { background:rgba(71,200,255,0.1); border-color:rgba(71,200,255,0.25); color:var(--info); }
+        .toast.warning { background:rgba(255,179,71,0.1); border-color:rgba(255,179,71,0.25); color:var(--warning); }
+        @keyframes t-in { from{opacity:0;transform:translateX(30px);} to{opacity:1;transform:translateX(0);} }
+        @keyframes t-out { from{opacity:1;transform:translateX(0);} to{opacity:0;transform:translateX(30px);} }
+
+        .website-row { transition:background 0.15s; cursor:pointer; border-left:3px solid transparent; }
+        .website-row:hover { background:rgba(0,230,138,0.03); }
+        .website-row.selected { background:rgba(0,230,138,0.06); border-left-color:var(--accent); }
+
+        .feed-item { animation:feed-in 0.35s ease; }
+        @keyframes feed-in { from{opacity:0;transform:translateY(-8px);} to{opacity:1;transform:translateY(0);} }
+
+        .progress-track { height:5px; border-radius:3px; background:rgba(0,230,138,0.08); overflow:hidden; }
+        .progress-fill { height:100%; border-radius:3px; transition:width 0.5s ease; }
+
+        .code-block { background:#060a08; border:1px solid var(--border); border-radius:10px; padding:16px; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--accent); line-height:1.7; overflow-x:auto; white-space:pre-wrap; word-break:break-all; }
+
+        .tab-btn { padding:7px 16px; border-radius:8px; font-size:12px; font-weight:600; border:none; cursor:pointer; transition:all 0.2s; font-family:inherit; background:transparent; color:var(--text-muted); }
+        .tab-btn.active { background:rgba(0,230,138,0.1); color:var(--accent); }
+        .tab-btn:hover:not(.active) { color:var(--text-secondary); }
+
+        .setup-step { display:flex; gap:12px; }
+        .setup-num { width:24px; height:24px; border-radius:50%; background:var(--accent-glow); color:var(--accent); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:2px; }
+
+        ::-webkit-scrollbar { width:5px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+        @media (max-width:1024px) { .grid-main{grid-template-columns:1fr!important;} .stat-grid{grid-template-columns:repeat(2,1fr)!important;} }
+        @media (max-width:640px) { .stat-grid{grid-template-columns:1fr!important;} }
+        @media (prefers-reduced-motion:reduce) { *,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important;} }
+    </style>
+</head>
+<body>
+    <div class="toast-wrap" id="toastWrap"></div>
+
+    <!-- Modal: Setup Supabase -->
+    <div class="modal-overlay active" id="modalSetup">
+        <div class="modal-box" style="max-width:580px;">
+            <div class="text-center mb-6">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-dim)] flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-bolt text-[var(--bg-primary)] text-xl"></i>
+                </div>
+                <h2 class="text-xl font-bold mb-1">ClickPulse Setup</h2>
+                <p class="text-[var(--text-secondary)] text-sm">Hubungkan ke Supabase untuk tracking real-time dari mana saja</p>
+            </div>
+
+            <div class="space-y-4 mb-6">
+                <div>
+                    <label class="block text-xs text-[var(--text-secondary)] mb-1.5 font-medium">Supabase Project URL</label>
+                    <input type="url" id="inpUrl" class="input-field font-mono" placeholder="https://xxxxx.supabase.co">
+                </div>
+                <div>
+                    <label class="block text-xs text-[var(--text-secondary)] mb-1.5 font-medium">Supabase Anon Key</label>
+                    <input type="text" id="inpKey" class="input-field font-mono text-xs" placeholder="eyJhbGciOiJIUzI1NiIs...">
+                </div>
+            </div>
+
+            <div class="bg-[var(--bg-primary)] rounded-xl p-4 mb-5 border border-[var(--border)]">
+                <h4 class="text-xs font-semibold text-[var(--text-secondary)] mb-3">Cara mendapatkan kredensial:</h4>
+                <div class="space-y-3">
+                    <div class="setup-step">
+                        <div class="setup-num">1</div>
+                        <div class="text-xs text-[var(--text-secondary)] leading-relaxed">Buat project di <a href="https://supabase.com" target="_blank" class="text-[var(--accent)] underline">supabase.com</a></div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-num">2</div>
+                        <div class="text-xs text-[var(--text-secondary)] leading-relaxed">Buka <strong class="text-[var(--text-primary)]">SQL Editor</strong> → jalankan SQL pembuatan tabel (lihat dokumentasi)</div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-num">3</div>
+                        <div class="text-xs text-[var(--text-secondary)] leading-relaxed">Buka <strong class="text-[var(--text-primary)]">Settings → API</strong> → salin URL dan Anon Key</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FIX: Tambahkan instruksi Enable Realtime -->
+            <div class="bg-[rgba(71,200,255,0.04)] rounded-xl p-4 mb-6 border border-[rgba(71,200,255,0.15)]">
+                <h4 class="text-xs font-semibold text-[var(--info)] mb-2"><i class="fas fa-exclamation-triangle mr-1.5"></i>Penting: Enable Realtime</h4>
+                <div class="text-xs text-[var(--text-secondary)] leading-relaxed">
+                    Agar <strong class="text-[var(--text-primary)]">Live Feed</strong> berfungsi, buka <strong class="text-[var(--text-primary)]">Database → Replication</strong> di Supabase dashboard, lalu aktifkan toggle <strong class="text-[var(--text-primary)]">click_events</strong> pada bagian <em>Realtime</em>. Tanpa ini, data hanya muncul saat halaman di-refresh.
+                </div>
+            </div>
+
+            <button class="btn-primary w-full" id="btnConnect" onclick="connectSupabase()">
+                <i class="fas fa-plug mr-2"></i>Hubungkan
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal: Tambah Website -->
+    <div class="modal-overlay" id="modalAdd">
+        <div class="modal-box">
+            <div class="flex items-center justify-between mb-5">
+                <h3 class="text-lg font-bold">Tambah Website</h3>
+                <button class="btn-icon" onclick="closeModal('modalAdd')"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs text-[var(--text-secondary)] mb-1.5 font-medium">Nama Website</label>
+                    <input type="text" id="inpName" class="input-field" placeholder="Contoh: Toko Online Saya">
+                </div>
+                <div>
+                    <label class="block text-xs text-[var(--text-secondary)] mb-1.5 font-medium">URL Website</label>
+                    <input type="url" id="inpSiteUrl" class="input-field" placeholder="https://example.com">
+                </div>
+                <div class="flex gap-3 pt-1">
+                    <button class="btn-primary flex-1" onclick="addWebsite()"><i class="fas fa-plus mr-2"></i>Tambah</button>
+                    <button class="btn-ghost" onclick="closeModal('modalAdd')">Batal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Hapus -->
+    <div class="modal-overlay" id="modalDel">
+        <div class="modal-box text-center">
+            <div class="w-14 h-14 rounded-full bg-[rgba(255,92,92,0.08)] flex items-center justify-center mx-auto mb-4"><i class="fas fa-trash-alt text-xl text-[var(--danger)]"></i></div>
+            <h3 class="text-lg font-bold mb-1">Hapus Website?</h3>
+            <p class="text-sm text-[var(--text-secondary)] mb-5" id="delText">Data akan dihapus.</p>
+            <div class="flex gap-3">
+                <button class="btn-ghost flex-1" onclick="closeModal('modalDel')">Batal</button>
+                <button class="flex-1 px-4 py-2.5 rounded-xl bg-[var(--danger)] text-white font-bold text-sm border-none cursor-pointer font-[inherit] hover:opacity-90 transition-opacity" onclick="confirmDel()">Hapus</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Snippet -->
+    <div class="modal-overlay" id="modalSnippet">
+        <div class="modal-box" style="max-width:600px;">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-lg font-bold">Tracking Snippet</h3>
+                    <p class="text-xs text-[var(--text-muted)] mt-0.5" id="snippetSiteName"></p>
+                </div>
+                <button class="btn-icon" onclick="closeModal('modalSnippet')"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="bg-[var(--bg-primary)] rounded-xl p-4 mb-4 border border-[var(--border)]">
+                <div class="flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-[rgba(0,230,138,0.1)] flex items-center justify-center flex-shrink:0 mt-0.5"><i class="fas fa-code text-xs text-[var(--accent)]"></i></div>
+                    <div class="text-xs text-[var(--text-secondary)] leading-relaxed">
+                        <strong class="text-[var(--text-primary)]">Cara pasang:</strong>
+                        <ol class="list-decimal ml-4 mt-1 space-y-1">
+                            <li>Salin kode di bawah</li>
+                            <li>Tempel di bagian bawah <code class="text-[var(--accent)]">&lt;body&gt;</code> website target</li>
+                            <li>Buka website target dari <strong class="text-[var(--text-primary)]">komputer/HP mana saja</strong></li>
+                            <li>Data klik akan muncul di dashboard ini secara real-time</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+            <div class="relative">
+                <div class="code-block" id="snippetCode"></div>
+                <button class="btn-primary absolute top-3 right-3 !py-2 !px-3 !text-xs" onclick="copySnippet()"><i class="fas fa-copy mr-1.5"></i>Salin</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Konten Utama -->
+    <div class="relative z-10 max-w-[1480px] mx-auto px-4 sm:px-6 lg:px-8 py-5" id="mainApp" style="display:none;">
+
+        <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-7">
+            <div>
+                <div class="flex items-center gap-3 mb-1">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-dim)] flex items-center justify-center"><i class="fas fa-bolt text-[var(--bg-primary)]"></i></div>
+                    <h1 class="text-xl font-bold tracking-tight">ClickPulse</h1>
+                </div>
+                <p class="text-[var(--text-secondary)] text-xs ml-12">Monitor klik visitor real-time dari mana saja via Supabase</p>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+                <div class="conn-badge ok" id="connBadge"><i class="fas fa-circle text-[6px]"></i>Terhubung</div>
+                <div class="live-badge"><div class="pulse-dot" style="width:6px;height:6px;"></div>LIVE</div>
+                <button class="btn-ghost text-xs" onclick="openModal('modalSetup')"><i class="fas fa-cog mr-1.5"></i>Supabase</button>
+                <button class="btn-primary" onclick="openModal('modalAdd')"><i class="fas fa-plus mr-1.5"></i>Tambah Web</button>
+            </div>
+        </header>
+
+        <div class="stat-grid grid gap-3.5 mb-5" style="grid-template-columns:repeat(4,1fr);">
+            <div class="glass-card stat-card c-green p-4">
+                <div class="flex items-center justify-between mb-2.5">
+                    <span class="text-[var(--text-secondary)] text-xs font-medium">Total Klik</span>
+                    <div class="w-8 h-8 rounded-lg bg-[rgba(0,230,138,0.08)] flex items-center justify-center"><i class="fas fa-mouse-pointer text-[var(--accent)] text-xs"></i></div>
+                </div>
+                <div class="text-2xl font-bold font-mono" id="sClicks">0</div>
+                <div class="text-[10px] text-[var(--text-muted)] mt-1" id="sClicksSub">hari ini</div>
+            </div>
+            <div class="glass-card stat-card c-blue p-4">
+                <div class="flex items-center justify-between mb-2.5">
+                    <span class="text-[var(--text-secondary)] text-xs font-medium">Unique Sessions</span>
+                    <div class="w-8 h-8 rounded-lg bg-[rgba(71,200,255,0.08)] flex items-center justify-center"><i class="fas fa-users text-[var(--info)] text-xs"></i></div>
+                </div>
+                <div class="text-2xl font-bold font-mono" id="sSessions">0</div>
+                <div class="text-[10px] text-[var(--text-muted)] mt-1" id="sSessionsSub">hari ini</div>
+            </div>
+            <div class="glass-card stat-card c-orange p-4">
+                <div class="flex items-center justify-between mb-2.5">
+                    <span class="text-[var(--text-secondary)] text-xs font-medium">Element Unik</span>
+                    <div class="w-8 h-8 rounded-lg bg-[rgba(255,179,71,0.08)] flex items-center justify-center"><i class="fas fa-layer-group text-[var(--warning)] text-xs"></i></div>
+                </div>
+                <div class="text-2xl font-bold font-mono" id="sElements">0</div>
+                <div class="text-[10px] text-[var(--text-muted)] mt-1">diklik hari ini</div>
+            </div>
+            <div class="glass-card stat-card c-purple p-4">
+                <div class="flex items-center justify-between mb-2.5">
+                    <span class="text-[var(--text-secondary)] text-xs font-medium">Klik/Menit</span>
+                    <div class="w-8 h-8 rounded-lg bg-[rgba(167,139,250,0.08)] flex items-center justify-center"><i class="fas fa-tachometer-alt text-[var(--purple)] text-xs"></i></div>
+                </div>
+                <div class="text-2xl font-bold font-mono" id="sRate">0</div>
+                <div class="text-[10px] text-[var(--text-muted)] mt-1">60 menit terakhir</div>
+            </div>
+        </div>
+
+        <div class="grid-main grid gap-5 mb-5" style="grid-template-columns:1fr 360px;">
+            <div class="space-y-5">
+                <div class="glass-card p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-base font-semibold">Aktivitas Klik</h2>
+                            <p class="text-[var(--text-muted)] text-xs mt-0.5">Per menit — 60 menit terakhir</p>
+                        </div>
+                        <div class="flex gap-1.5">
+                            <button class="tab-btn active" onclick="switchView('bar',this)">Bar</button>
+                            <button class="tab-btn" onclick="switchView('line',this)">Line</button>
+                        </div>
+                    </div>
+                    <div style="height:240px;"><canvas id="chartMain"></canvas></div>
+                </div>
+                <div class="glass-card p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-base font-semibold">Perbandingan Website</h2>
+                            <p class="text-[var(--text-muted)] text-xs mt-0.5">Total klik hari ini per website</p>
+                        </div>
+                    </div>
+                    <div style="height:180px;"><canvas id="chartComp"></canvas></div>
+                </div>
+            </div>
+
+            <div class="space-y-5">
+                <div class="glass-card overflow-hidden">
+                    <div class="p-4 pb-2 flex items-center justify-between">
+                        <h2 class="text-sm font-semibold">Website</h2>
+                        <span class="text-[10px] text-[var(--text-muted)] font-mono" id="siteCount">0</span>
+                    </div>
+                    <div class="max-h-[270px] overflow-y-auto" id="siteList"></div>
+                </div>
+                <div class="glass-card overflow-hidden">
+                    <div class="p-4 pb-2 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-sm font-semibold">Live Feed</h2>
+                            <div class="pulse-dot" style="width:5px;height:5px;"></div>
+                        </div>
+                        <button class="text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors bg-transparent border-none cursor-pointer font-[inherit]" onclick="clearFeed()"><i class="fas fa-eraser mr-1"></i>Bersihkan</button>
+                    </div>
+                    <div class="max-h-[250px] overflow-y-auto px-4 pb-3 space-y-1.5" id="liveFeed">
+                        <div class="text-center text-[var(--text-muted)] text-xs py-6"><i class="fas fa-satellite-dish text-xl mb-2 block opacity-30"></i>Menunggu klik dari website target...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-card p-5 mb-5" id="detailPanel" style="display:none;">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold" id="dIcon">W</div>
+                    <div><h2 class="text-base font-semibold" id="dName"></h2><span class="text-[var(--text-muted)] text-xs" id="dUrl"></span></div>
+                </div>
+                <div class="flex gap-2">
+                    <button class="btn-ghost text-xs !py-1.5 !px-3" onclick="openSnippetFor(selectedSiteId)"><i class="fas fa-code mr-1.5"></i>Snippet</button>
+                    <button class="btn-icon" onclick="hideDetail()"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <div class="bg-[var(--bg-primary)] rounded-xl p-3"><div class="text-[var(--text-muted)] text-[10px] mb-0.5">Total Klik</div><div class="text-lg font-bold font-mono" id="dClicks">0</div></div>
+                <div class="bg-[var(--bg-primary)] rounded-xl p-3"><div class="text-[var(--text-muted)] text-[10px] mb-0.5">Sessions</div><div class="text-lg font-bold font-mono" id="dSessions">0</div></div>
+                <div class="bg-[var(--bg-primary)] rounded-xl p-3"><div class="text-[var(--text-muted)] text-[10px] mb-0.5">Element Unik</div><div class="text-lg font-bold font-mono" id="dElements">0</div></div>
+                <div class="bg-[var(--bg-primary)] rounded-xl p-3"><div class="text-[var(--text-muted)] text-[10px] mb-0.5">Klik/Menit</div><div class="text-lg font-bold font-mono" id="dRate">0</div></div>
+            </div>
+            <h3 class="text-xs font-semibold text-[var(--text-secondary)] mb-2">Element Paling Banyak Diklik</h3>
+            <div class="space-y-1.5" id="dElementsList"></div>
+        </div>
+
+        <footer class="text-center text-[var(--text-muted)] text-[10px] py-3 border-t border-[var(--border)]">ClickPulse Monitor — Real-time via Supabase</footer>
+    </div>
+
+    <script>
+    // ==========================================================
+    // STATE
+    // ==========================================================
+    var COLORS = ['#00e68a','#47c8ff','#ffb347','#ff5c5c','#a78bfa','#f472b6','#34d399','#fbbf24','#60a5fa','#fb923c'];
+    var sb = null;
+    var sbSub = null;
+    var websites = [];
+    var selectedSiteId = null;
+    var delTargetId = null;
+    var feedItems = [];
+    var chartMain = null;
+    var chartComp = null;
+    var currentView = 'bar';
+    var hourlyBuckets = new Array(60).fill(0);
+    var cachedEvents = [];
+    var siteStats = {};
+    var realtimeRetryCount = 0;
+    var MAX_REALTIME_RETRIES = 5;
+    var realtimeRetryTimer = null;
+
+    // ==========================================================
+    // SUPABASE CONNECTION
+    // ==========================================================
+    function connectSupabase() {
+        var url = document.getElementById('inpUrl').value.trim();
+        var key = document.getElementById('inpKey').value.trim();
+        if (!url || !key) { showToast('URL dan Anon Key wajib diisi', 'error'); return; }
+        if (!url.includes('supabase.co')) { showToast('URL tidak valid, pastikan berakhir dengan .supabase.co', 'error'); return; }
+
+        var btn = document.getElementById('btnConnect');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Menghubungkan...';
+
+        try {
+            sb = window.supabase.createClient(url, key);
+
+            sb.from('click_events').select('id', { count: 'exact', head: true }).then(function(res) {
+                var error = res.error;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-plug mr-2"></i>Hubungkan';
+
+                if (error) {
+                    // FIX: Deteksi error spesifik untuk memberi pesan yang lebih membantu
+                    var msg = error.message || '';
+                    if (msg.includes('does not exist') || error.code === '42P01') {
+                        showToast('Tabel "click_events" belum dibuat. Jalankan SQL pembuatan tabel terlebih dahulu di SQL Editor.', 'error');
+                    } else if (msg.includes('policy') || msg.includes('RLS') || error.code === '42501') {
+                        showToast('RLS menghalangi akses. Tambahkan policy SELECT & INSERT untuk anon role di tabel click_events.', 'error');
+                    } else if (msg.includes('API key') || msg.includes('invalid')) {
+                        showToast('Anon Key tidak valid. Pastikan menyalin key yang benar dari Settings → API.', 'error');
+                    } else {
+                        showToast('Gagal terhubung: ' + msg, 'error');
+                    }
+                    return;
+                }
+
+                localStorage.setItem('cp_sb_url', url);
+                localStorage.setItem('cp_sb_key', key);
+                closeModal('modalSetup');
+                document.getElementById('mainApp').style.display = 'block';
+                setConnBadge('ok');
+                showToast('Terhubung ke Supabase!', 'success');
+                initApp();
+            }).catch(function(err) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-plug mr-2"></i>Hubungkan';
+                showToast('Error jaringan: ' + (err.message || 'Tidak dapat terhubung'), 'error');
+            });
+        } catch (err) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-plug mr-2"></i>Hubungkan';
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    function tryAutoConnect() {
+        var url = localStorage.getItem('cp_sb_url');
+        var key = localStorage.getItem('cp_sb_key');
+        if (url && key) {
+            document.getElementById('inpUrl').value = url;
+            document.getElementById('inpKey').value = key;
+            try {
+                sb = window.supabase.createClient(url, key);
+                sb.from('click_events').select('id', { count: 'exact', head: true }).then(function(res) {
+                    if (!res.error) {
+                        closeModal('modalSetup');
+                        document.getElementById('mainApp').style.display = 'block';
+                        setConnBadge('ok');
+                        initApp();
+                    }
+                    // Jika error, biarkan modal setup tetap terbuka
+                }).catch(function() {
+                    // Biarkan modal setup tetap terbuka
+                });
+            } catch(e) { /* tetap tampilkan form */ }
+        }
+    }
+
+    // FIX: Helper untuk update connection badge
+    function setConnBadge(status) {
+        var badge = document.getElementById('connBadge');
+        if (status === 'ok') {
+            badge.className = 'conn-badge ok';
+            badge.innerHTML = '<i class="fas fa-circle text-[6px]"></i>Terhubung';
+        } else if (status === 'off') {
+            badge.className = 'conn-badge off';
+            badge.innerHTML = '<i class="fas fa-circle text-[6px]"></i>Disconnected';
+        } else if (status === 'retry') {
+            badge.className = 'conn-badge retry';
+            badge.innerHTML = '<i class="fas fa-sync-alt fa-spin text-[8px]"></i>Reconnecting';
+        }
+    }
+
+    // ==========================================================
+    // SNIPPET GENERATOR
+    // ==========================================================
+    function generateSnippet(site) {
+        var sbUrl = localStorage.getItem('cp_sb_url');
+        var sbKey = localStorage.getItem('cp_sb_key');
+        // FIX: Sanitasi lebih ketat — juga handle backtick yang bisa memecah template
+        var safeName = site.name.replace(/[^a-zA-Z0-9\s\-_.]/g, '').substring(0, 50);
+        return '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"><' + '/script>\n<script>\n' +
+        '(function(){\n' +
+        '  var sb = window.supabase.createClient(\'' + sbUrl + '\', \'' + sbKey + '\');\n' +
+        '  var siteId = \'' + site.id + '\';\n' +
+        '  var siteName = \'' + safeName + '\';\n' +
+        '  var sessionId = \'s_\' + Date.now() + \'_\' + Math.random().toString(36).substring(2,10);\n' +
+        '  var origin = location.origin || \'\';\n\n' +
+        '  document.addEventListener(\'click\', function(e){\n' +
+        '    var el = e.target;\n' +
+        '    var tag = el.tagName.toLowerCase();\n' +
+        '    var text = (el.innerText || el.textContent || \'\').trim().substring(0, 100);\n' +
+        '    var sel = el.id ? \'#\'+el.id : el.className ? \'.\'+el.className.toString().trim().split(/\\\\s+/).join(\'.\') : tag;\n' +
+        '    var href = el.href || null;\n\n' +
+        '    sb.from(\'click_events\').insert({\n' +
+        '      site_id: siteId,\n' +
+        '      site_name: siteName,\n' +
+        '      session_id: sessionId,\n' +
+        '      tag: tag,\n' +
+        '      element_text: text,\n' +
+        '      selector: sel,\n' +
+        '      href: href,\n' +
+        // FIX: Kirim full URL supaya auto-detect website bisa bekerja
+        '      page_path: location.href\n' +
+        '    }).then(function(){});\n' +
+        '  }, true);\n' +
+        '})();\n' +
+        '<' + '/script>';
+    }
+
+    function openSnippetFor(id) {
+        var site = websites.find(function(w) { return w.id === id; });
+        if (!site) return;
+        document.getElementById('snippetSiteName').textContent = site.name + ' — ' + site.url;
+        document.getElementById('snippetCode').textContent = generateSnippet(site);
+        openModal('modalSnippet');
+    }
+
+    function copySnippet() {
+        var code = document.getElementById('snippetCode').textContent;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(function() {
+                showToast('Snippet disalin ke clipboard', 'success');
+            }).catch(function() {
+                fallbackCopy(code);
+            });
+        } else {
+            fallbackCopy(code);
+        }
+    }
+
+    function fallbackCopy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            showToast('Snippet disalin', 'success');
+        } catch(e) {
+            showToast('Gagal menyalin, silakan copy manual', 'error');
+        }
+        document.body.removeChild(ta);
+    }
+
+    // ==========================================================
+    // DATA LOADING & PROCESSING
+    // ==========================================================
+    function loadSites() {
+        var saved = localStorage.getItem('cp_sites_v3');
+        if (saved) {
+            try { websites = JSON.parse(saved); } catch(e) { websites = []; }
+        }
+        if (websites.length === 0) {
+            websites = [
+                { id: 'site_1', name: 'Website 1', url: 'https://website1.com', color: COLORS[0] },
+                { id: 'site_2', name: 'Website 2', url: 'https://website2.com', color: COLORS[1] },
+                { id: 'site_3', name: 'Website 3', url: 'https://website3.com', color: COLORS[2] },
+            ];
+            saveSites();
+        }
+    }
+
+    function saveSites() { localStorage.setItem('cp_sites_v3', JSON.stringify(websites)); }
+
+    function processEvents(events) {
+        cachedEvents = events || [];
+        siteStats = {};
+        hourlyBuckets = new Array(60).fill(0);
+
+        var now = Date.now();
+
+        for (var i = 0; i < cachedEvents.length; i++) {
+            var ev = cachedEvents[i];
+            if (!siteStats[ev.site_id]) {
+                siteStats[ev.site_id] = { clicks: 0, sessions: {}, elements: {}, recentClicks: 0 };
+            }
+            var s = siteStats[ev.site_id];
+            s.clicks++;
+            if (ev.session_id) s.sessions[ev.session_id] = true;
+            var eKey = ev.element_text || ev.selector || ev.tag || 'unknown';
+            s.elements[eKey] = (s.elements[eKey] || 0) + 1;
+
+            // FIX: Gunakan Date.now() untuk perhitungan yang konsisten
+            var evTime = new Date(ev.created_at).getTime();
+            if (isNaN(evTime)) continue;
+            var minutesAgo = Math.floor((now - evTime) / 60000);
+            if (minutesAgo >= 0 && minutesAgo < 60) {
+                hourlyBuckets[59 - minutesAgo]++;
+                s.recentClicks = (s.recentClicks || 0) + 1;
+            }
+        }
+    }
+
+    async function loadTodayData() {
+        if (!sb) return;
+        var todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        try {
+            var { data, error } = await sb
+                .from('click_events')
+                .select('*')
+                .gte('created_at', todayStart.toISOString())
+                .order('created_at', { ascending: false })
+                .limit(5000);
+
+            if (error) {
+                console.error('Load error:', error);
+                showToast('Gagal memuat data: ' + error.message, 'error');
+                return;
+            }
+
+            processEvents(data || []);
+
+            feedItems = (data || []).slice(0, 20).map(function(ev) {
+                return {
+                    siteName: ev.site_name || ev.site_id,
+                    siteColor: getSiteColor(ev.site_id),
+                    tag: ev.tag || '?',
+                    text: truncate(ev.element_text || ev.selector || '-', 40),
+                    page: truncate(ev.page_path || '-', 20),
+                    time: formatTime(ev.created_at)
+                };
+            });
+
+            renderAll();
+        } catch(err) {
+            console.error('Load exception:', err);
+        }
+    }
+
+    // FIX: Helper formatting waktu yang aman
+    function formatTime(dateStr) {
+        try {
+            return new Date(dateStr).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        } catch(e) {
+            return '--:--:--';
+        }
+    }
+
+    function getSiteColor(siteId) {
+        var w = websites.find(function(s) { return s.id === siteId; });
+        return w ? w.color : '#6d9880';
+    }
+
+    // ==========================================================
+    // REALTIME SUBSCRIPTION
+    // ==========================================================
+    function subscribeRealtime() {
+        if (!sb) return;
+
+        // FIX: Bersihkan subscription lama jika ada sebelum buat baru
+        if (sbSub) {
+            try { sb.removeChannel(sbSub); } catch(e) {}
+            sbSub = null;
+        }
+
+        sbSub = sb.channel('clickpulse-public-' + Date.now())
+            .on('postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'click_events' },
+                function(payload) {
+                    realtimeRetryCount = 0; // Reset retry count on success
+                    handleRealtimeEvent(payload.new);
+                }
+            )
+            .subscribe(function(status, err) {
+                if (status === 'SUBSCRIBED') {
+                    console.log('Realtime subscribed');
+                    setConnBadge('ok');
+                } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                    console.error('Realtime error:', status, err);
+                    handleRealtimeError(status);
+                } else if (status === 'CLOSED') {
+                    console.warn('Realtime channel closed');
+                    handleRealtimeError('CLOSED');
+                }
+            });
+    }
+
+    // FIX: Handle realtime error dengan retry
+    function handleRealtimeError(reason) {
+        setConnBadge('off');
+
+        if (realtimeRetryCount < MAX_REALTIME_RETRIES) {
+            realtimeRetryCount++;
+            var delay = Math.min(1000 * Math.pow(2, realtimeRetryCount), 30000);
+            console.log('Retrying realtime in ' + delay + 'ms (attempt ' + realtimeRetryCount + ')');
+            setConnBadge('retry');
+
+            if (realtimeRetryTimer) clearTimeout(realtimeRetryTimer);
+            realtimeRetryTimer = setTimeout(function() {
+                subscribeRealtime();
+            }, delay);
+        } else {
+            showToast('Realtime gagal terhubung setelah ' + MAX_REALTIME_RETRIES + ' percobaan. Pastikan Realtime di-enable di Supabase Dashboard → Database → Replication.', 'warning');
+        }
+    }
+
+    function handleRealtimeEvent(ev) {
+        if (!ev) return;
+
+        // Update siteStats
+        if (!siteStats[ev.site_id]) {
+            siteStats[ev.site_id] = { clicks: 0, sessions: {}, elements: {}, recentClicks: 0 };
+        }
+        var s = siteStats[ev.site_id];
+        s.clicks++;
+        s.recentClicks = (s.recentClicks || 0) + 1;
+        if (ev.session_id) s.sessions[ev.session_id] = true;
+        var eKey = ev.element_text || ev.selector || ev.tag || 'unknown';
+        s.elements[eKey] = (s.elements[eKey] || 0) + 1;
+
+        // FIX: Tambah ke bucket terakhir (klik baru = now)
+        hourlyBuckets[59]++;
+
+        // Update feed
+        feedItems.unshift({
+            siteName: ev.site_name || ev.site_id,
+            siteColor: getSiteColor(ev.site_id),
+            tag: ev.tag || '?',
+            text: truncate(ev.element_text || ev.selector || '-', 40),
+            page: truncate(ev.page_path || '-', 20),
+            time: formatTime(ev.created_at)
+        });
+        if (feedItems.length > 50) feedItems.pop();
+
+        // FIX: Auto-detect website baru — sekarang page_path berisi full URL
+        if (!websites.find(function(w) { return w.id === ev.site_id; }) && ev.site_name) {
+            var detectedUrl = 'https://unknown.com';
+            try {
+                // page_path sekarang berisi location.href dari snippet
+                if (ev.page_path && (ev.page_path.startsWith('http://') || ev.page_path.startsWith('https://'))) {
+                    detectedUrl = new URL(ev.page_path).origin;
+                } else if (ev.href && (ev.href.startsWith('http://') || ev.href.startsWith('https://'))) {
+                    detectedUrl = new URL(ev.href).origin;
+                }
+            } catch(e) { /* gunakan default */ }
+
+            websites.push({
+                id: ev.site_id,
+                name: ev.site_name,
+                url: detectedUrl,
+                color: COLORS[websites.length % COLORS.length]
+            });
+            saveSites();
+            renderSiteList();
+            showToast('Website baru terdeteksi: ' + ev.site_name, 'info');
+        }
+
+        updateStats();
+        renderFeed();
+        updateCharts();
+        if (selectedSiteId === ev.site_id) showDetail(ev.site_id);
+    }
+
+    // ==========================================================
+    // HOURLY BUCKET TICKER — geser setiap 60 detik
+    // ==========================================================
+    setInterval(function() {
+        hourlyBuckets.shift();
+        hourlyBuckets.push(0);
+
+        // Update recentClicks di setiap siteStats
+        Object.keys(siteStats).forEach(function(siteId) {
+            siteStats[siteId].recentClicks = Math.max(0, (siteStats[siteId].recentClicks || 0) - hourlyBuckets[0]);
+        });
+
+        updateCharts();
+        updateStats();
+    }, 60000);
+
+    // ==========================================================
+    // RENDERING
+    // ==========================================================
+    function truncate(str, len) {
+        if (!str) return '-';
+        return str.length > len ? str.substring(0, len) + '...' : str;
+    }
+
+    // FIX: Hitung rate dari hourlyBuckets, bukan totalClicks/60
+    function getRateFromBuckets() {
+        var sum = 0;
+        for (var i = 0; i < hourlyBuckets.length; i++) sum += hourlyBuckets[i];
+        return sum > 0 ? (sum / 60).toFixed(1) : '0';
+    }
+
+    function updateStats() {
+        var totalClicks = 0;
+        var totalSessionsSet = {};
+        var totalElementsSet = {};
+
+        Object.keys(siteStats).forEach(function(siteId) {
+            var s = siteStats[siteId];
+            totalClicks += s.clicks;
+            Object.keys(s.sessions).forEach(function(sess) {
+                totalSessionsSet[siteId + ':' + sess] = true;
+            });
+            Object.keys(s.elements).forEach(function(k) {
+                totalElementsSet[siteId + ':' + k] = true;
+            });
+        });
+
+        document.getElementById('sClicks').textContent = totalClicks.toLocaleString('id-ID');
+        document.getElementById('sSessions').textContent = Object.keys(totalSessionsSet).length;
+        document.getElementById('sElements').textContent = Object.keys(totalElementsSet).length;
+        // FIX: Gunakan bucket data untuk rate yang akurat
+        document.getElementById('sRate').textContent = getRateFromBuckets();
+    }
+
+    function renderSiteList() {
+        var el = document.getElementById('siteList');
+        if (websites.length === 0) {
+            el.innerHTML = '<div class="text-center py-8 px-4"><i class="fas fa-globe text-2xl text-[var(--text-muted)] opacity-20 mb-2 block"></i><p class="text-[var(--text-muted)] text-xs">Belum ada website.</p></div>';
+            return;
+        }
+        el.innerHTML = websites.map(function(w) {
+            var s = siteStats[w.id] || { clicks: 0, sessions: {} };
+            var sessCount = typeof s.sessions === 'object' && !Array.isArray(s.sessions) ? Object.keys(s.sessions).length : (Array.isArray(s.sessions) ? s.sessions.size : 0);
+            var isSelected = selectedSiteId === w.id;
+            return '<div class="website-row flex items-center gap-2.5 px-4 py-3 ' + (isSelected ? 'selected' : '') + '" onclick="selectSite(\'' + w.id + '\')">' +
+                '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink:0" style="background:' + w.color + '12;color:' + w.color + ';">' + w.name.charAt(0) + '</div>' +
+                '<div class="flex-1 min-w-0">' +
+                    '<div class="text-xs font-semibold truncate">' + escapeHtml(w.name) + '</div>' +
+                    '<div class="text-[10px] text-[var(--text-muted)] truncate">' + escapeHtml(w.url) + '</div>' +
+                '</div>' +
+                '<div class="text-right flex-shrink:0 mr-1">' +
+                    '<div class="text-sm font-mono font-bold" style="color:' + w.color + '">' + s.clicks + '</div>' +
+                    '<div class="text-[9px] text-[var(--text-muted)]">' + sessCount + ' sess</div>' +
+                '</div>' +
+                '<div class="flex gap-0.5 flex-shrink:0">' +
+                    '<button class="btn-icon" onclick="event.stopPropagation();openSnippetFor(\'' + w.id + '\')" title="Snippet"><i class="fas fa-code"></i></button>' +
+                    '<button class="btn-icon danger" onclick="event.stopPropagation();openDelModal(\'' + w.id + '\')" title="Hapus"><i class="fas fa-trash-alt"></i></button>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+        document.getElementById('siteCount').textContent = websites.length + ' sites';
+    }
+
+    // FIX: Helper escape HTML untuk mencegah XSS dari nama website
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    }
+
+    function renderFeed() {
+        var el = document.getElementById('liveFeed');
+        if (feedItems.length === 0) {
+            el.innerHTML = '<div class="text-center text-[var(--text-muted)] text-xs py-6"><i class="fas fa-satellite-dish text-xl mb-2 block opacity-30"></i>Menunggu klik dari website target...</div>';
+            return;
+        }
+        var tagIcons = { 'a':'fa-link', 'button':'fa-hand-pointer', 'input':'fa-keyboard', 'img':'fa-image', 'select':'fa-list', 'textarea':'fa-align-left' };
+        el.innerHTML = feedItems.slice(0, 25).map(function(item, i) {
+            var isNew = i === 0;
+            // FIX: Gradient opacity yang lebih gradual — linear decay
+            var opacity = isNew ? '' : 'opacity:' + Math.max(0.3, 1 - i * 0.03).toFixed(2);
+            return '<div class="feed-item flex items-start gap-2.5 p-2 rounded-lg ' + (isNew ? 'bg-[var(--bg-primary)] border border-[var(--border)]' : '') + '" style="' + opacity + '">' +
+                '<div class="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink:0" style="background:' + item.siteColor + ';"></div>' +
+                '<div class="flex-1 min-w-0">' +
+                    '<div class="flex items-center gap-1.5 text-[11px]">' +
+                        '<i class="fas ' + (tagIcons[item.tag] || 'fa-circle') + ' text-[9px] text-[var(--text-muted)]"></i>' +
+                        '<span class="font-semibold" style="color:' + item.siteColor + '">' + escapeHtml(item.siteName) + '</span>' +
+                        '<span class="text-[var(--text-muted)]">&middot;</span>' +
+                        '<span class="text-[var(--text-secondary)] truncate">' + escapeHtml(item.text) + '</span>' +
+                    '</div>' +
+                    '<div class="text-[10px] text-[var(--text-muted)] mt-0.5 flex items-center gap-2">' +
+                        '<span class="uppercase font-mono bg-[rgba(255,255,255,0.03)] px-1.5 py-0.5 rounded">&lt;' + escapeHtml(item.tag) + '&gt;</span>' +
+                        '<span>' + escapeHtml(item.page) + '</span>' +
+                    '</div>' +
+                '</div>' +
+                '<span class="text-[9px] font-mono text-[var(--text-muted)] flex-shrink:0">' + item.time + '</span>' +
+            '</div>';
+        }).join('');
+    }
+
+    function clearFeed() {
+        feedItems = [];
+        renderFeed();
+        showToast('Feed dibersihkan', 'info');
+    }
+
+    function selectSite(id) {
+        selectedSiteId = selectedSiteId === id ? null : id;
+        renderSiteList();
+        if (selectedSiteId) showDetail(id);
+        else hideDetail();
+    }
+
+    function showDetail(id) {
+        var w = websites.find(function(s) { return s.id === id; });
+        if (!w) return;
+        var s = siteStats[id] || { clicks: 0, sessions: {}, elements: {}, recentClicks: 0 };
+        var sessCount = typeof s.sessions === 'object' && !Array.isArray(s.sessions) ? Object.keys(s.sessions).length : 0;
+        var panel = document.getElementById('detailPanel');
+        panel.style.display = 'block';
+
+        document.getElementById('dIcon').textContent = w.name.charAt(0);
+        document.getElementById('dIcon').style.background = w.color + '12';
+        document.getElementById('dIcon').style.color = w.color;
+        document.getElementById('dName').textContent = w.name;
+        document.getElementById('dUrl').textContent = w.url;
+        document.getElementById('dClicks').textContent = s.clicks.toLocaleString('id-ID');
+        document.getElementById('dSessions').textContent = sessCount;
+        document.getElementById('dElements').textContent = Object.keys(s.elements || {}).length;
+        // FIX: Gunakan recentClicks dari bucket untuk rate per-site
+        document.getElementById('dRate').textContent = s.recentClicks > 0 ? (s.recentClicks / 60).toFixed(1) : '0';
+
+        var sorted = Object.entries(s.elements || {}).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 8);
+        var maxC = sorted.length > 0 ? sorted[0][1] : 1;
+        document.getElementById('dElementsList').innerHTML = sorted.length === 0
+            ? '<div class="text-xs text-[var(--text-muted)] py-3 text-center">Belum ada data klik</div>'
+            : sorted.map(function(entry) {
+                var key = entry[0];
+                var count = entry[1];
+                return '<div class="flex items-center gap-3 bg-[var(--bg-primary)] rounded-lg p-2.5">' +
+                    '<span class="text-[11px] font-mono text-[var(--text-muted)] flex-1 truncate">' + escapeHtml(key) + '</span>' +
+                    '<div class="progress-track w-24 flex-shrink:0"><div class="progress-fill" style="width:' + (count / maxC * 100).toFixed(0) + '%;background:' + w.color + ';"></div></div>' +
+                    '<span class="text-[11px] font-mono font-bold w-8 text-right" style="color:' + w.color + '">' + count + '</span>' +
+                '</div>';
+            }).join('');
+
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function hideDetail() {
+        selectedSiteId = null;
+        document.getElementById('detailPanel').style.display = 'none';
+        renderSiteList();
+    }
+
+    // ==========================================================
+    // CHARTS
+    // ==========================================================
+    function initCharts() {
+        Chart.defaults.color = '#6d9880';
+        Chart.defaults.borderColor = 'rgba(28,49,39,0.4)';
+        Chart.defaults.font.family = 'Space Grotesk';
+
+        var labels = [];
+        for (var i = 59; i >= 0; i--) labels.push(i === 0 ? 'now' : '-' + i + 'm');
+
+        chartMain = new Chart(document.getElementById('chartMain').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Klik',
+                    data: hourlyBuckets.slice(),
+                    backgroundColor: 'rgba(0,230,138,0.4)',
+                    borderColor: '#00e68a',
+                    borderWidth: 0,
+                    borderRadius: 3,
+                    barThickness: 6
+                }]
+            },
+            options: getMainChartOptions(false)
+        });
+
+        chartComp = new Chart(document.getElementById('chartComp').getContext('2d'), {
+            type: 'bar',
+            data: getCompData(),
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#0f1713',
+                        borderColor: '#1c3127',
+                        borderWidth: 1,
+                        titleColor: '#e4f2ea',
+                        bodyColor: '#6d9880',
+                        padding: 10,
+                        cornerRadius: 8,
+                        callbacks: { label: function(ctx) { return ctx.parsed.x + ' klik'; } }
+                    }
+                },
+                scales: {
+                    x: { grid: { color: 'rgba(28,49,39,0.2)' }, ticks: { font: { size: 10 } }, beginAtZero: true },
+                    y: { grid: { display: false }, ticks: { font: { size: 11, weight: '500' } } }
+                },
+                borderRadius: 5,
+                barThickness: 22
+            }
+        });
+    }
+
+    // FIX: Extract chart options ke function agar tidak duplikat
+    function getMainChartOptions(isLine) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#0f1713',
+                    borderColor: '#1c3127',
+                    borderWidth: 1,
+                    titleColor: '#e4f2ea',
+                    bodyColor: '#6d9880',
+                    padding: 10,
+                    cornerRadius: 8,
+                    callbacks: { label: function(ctx) { return ctx.parsed.y + ' klik'; } }
+                }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+                y: { grid: { color: 'rgba(28,49,39,0.2)' }, ticks: { font: { size: 10 }, stepSize: 1 }, beginAtZero: true }
+            },
+            elements: isLine ? { point: { radius: 0, hoverRadius: 4 }, line: { tension: 0.4, borderWidth: 2 } } : {}
+        };
+    }
+
+    function getCompData() {
+        var sorted = websites.map(function(w) {
+            return { name: w.name, color: w.color, clicks: (siteStats[w.id] || { clicks: 0 }).clicks };
+        }).filter(function(w) { return w.clicks > 0; }).sort(function(a, b) { return b.clicks - a.clicks; });
+
+        if (sorted.length === 0) {
+            return {
+                labels: ['Belum ada data'],
+                datasets: [{ data: [0], backgroundColor: ['rgba(63,102,82,0.2)'], borderColor: ['#3f6652'], borderWidth: 1, borderRadius: 5, barThickness: 22 }]
+            };
+        }
+        return {
+            labels: sorted.map(function(w) { return w.name; }),
+            datasets: [{
+                data: sorted.map(function(w) { return w.clicks; }),
+                backgroundColor: sorted.map(function(w) { return w.color + '55'; }),
+                borderColor: sorted.map(function(w) { return w.color; }),
+                borderWidth: 1,
+                borderRadius: 5,
+                barThickness: 22
+            }]
+        };
+    }
+
+    function updateCharts() {
+        if (chartMain) {
+            chartMain.data.datasets[0].data = hourlyBuckets.slice();
+            chartMain.update('none');
+        }
+        if (chartComp) {
+            chartComp.data = getCompData();
+            chartComp.update('none');
+        }
+    }
+
+    function switchView(view, btn) {
+        currentView = view;
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+
+        if (chartMain) chartMain.destroy();
+
+        var labels = [];
+        for (var i = 59; i >= 0; i--) labels.push(i === 0 ? 'now' : '-' + i + 'm');
+        var isLine = view === 'line';
+
+        chartMain = new Chart(document.getElementById('chartMain').getContext('2d'), {
+            type: isLine ? 'line' : 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Klik',
+                    data: hourlyBuckets.slice(),
+                    backgroundColor: isLine ? 'rgba(0,230,138,0.08)' : 'rgba(0,230,138,0.4)',
+                    borderColor: '#00e68a',
+                    borderWidth: isLine ? 2 : 0,
+                    fill: isLine,
+                    borderRadius: isLine ? 0 : 3,
+                    barThickness: 6
+                }]
+            },
+            options: getMainChartOptions(isLine)
+        });
+    }
+
+    // ==========================================================
+    // MODAL HELPERS
+    // ==========================================================
+    function openModal(id) {
+        document.getElementById(id).classList.add('active');
+        if (id === 'modalAdd') setTimeout(function() { document.getElementById('inpName').focus(); }, 100);
+    }
+    function closeModal(id) {
+        document.getElementById(id).classList.remove('active');
+    }
+
+    function addWebsite() {
+        var name = document.getElementById('inpName').value.trim();
+        var url = document.getElementById('inpSiteUrl').value.trim();
+        if (!name) { showToast('Nama wajib diisi', 'error'); return; }
+        if (!url) { showToast('URL wajib diisi', 'error'); return; }
+        if (!url.startsWith('http')) url = 'https://' + url;
+        var id = 'site_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+        websites.push({ id: id, name: name, url: url, color: COLORS[websites.length % COLORS.length] });
+        saveSites();
+        // FIX: Reset input SEBELUM tutup modal agar tidak flash
+        document.getElementById('inpName').value = '';
+        document.getElementById('inpSiteUrl').value = '';
+        closeModal('modalAdd');
+        renderAll();
+        showToast('"' + name + '" ditambahkan — ambil snippet-nya untuk mulai tracking', 'success');
+    }
+
+    function openDelModal(id) {
+        delTargetId = id;
+        var w = websites.find(function(s) { return s.id === id; });
+        document.getElementById('delText').textContent = '"' + (w ? w.name : 'Website') + '" akan dihapus dari daftar. Data klik di Supabase tidak terhapus.';
+        openModal('modalDel');
+    }
+
+    function confirmDel() {
+        if (!delTargetId) return;
+        var w = websites.find(function(s) { return s.id === delTargetId; });
+        var name = w ? w.name : 'Website';
+        websites = websites.filter(function(s) { return s.id !== delTargetId; });
+        if (selectedSiteId === delTargetId) {
+            selectedSiteId = null;
+            document.getElementById('detailPanel').style.display = 'none';
+        }
+        delTargetId = null;
+        saveSites();
+        closeModal('modalDel');
+        renderAll();
+        showToast('"' + name + '" dihapus dari daftar', 'success');
+    }
+
+    // ==========================================================
+    // TOAST
+    // ==========================================================
+    function showToast(msg, type) {
+        type = type || 'info';
+        var wrap = document.getElementById('toastWrap');
+        var t = document.createElement('div');
+        t.className = 'toast ' + type;
+        var icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' };
+        t.innerHTML = '<i class="fas ' + (icons[type] || icons.info) + '"></i><span>' + escapeHtml(msg) + '</span>';
+        wrap.appendChild(t);
+        setTimeout(function() {
+            t.style.animation = 't-out 0.3s ease forwards';
+            setTimeout(function() { if (t.parentNode) t.remove(); }, 300);
+        }, 4000);
+    }
+
+    // ==========================================================
+    // KEYBOARD & CLICK OUTSIDE
+    // ==========================================================
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeModal('modalSetup');
+            closeModal('modalAdd');
+            closeModal('modalDel');
+            closeModal('modalSnippet');
+        }
+        if (e.key === 'Enter' && document.getElementById('modalAdd').classList.contains('active')) {
+            addWebsite();
+        }
+    });
+
+    ['modalAdd', 'modalDel', 'modalSnippet', 'modalSetup'].forEach(function(id) {
+        document.getElementById(id).addEventListener('click', function(e) {
+            if (e.target === e.currentTarget) closeModal(id);
+        });
+    });
+
+    // ==========================================================
+    // RENDER ALL & INIT
+    // ==========================================================
+    function renderAll() {
+        updateStats();
+        renderSiteList();
+        renderFeed();
+        updateCharts();
+        if (selectedSiteId) {
+            if (websites.find(function(w) { return w.id === selectedSiteId; })) {
+                showDetail(selectedSiteId);
+            } else {
+                hideDetail();
+            }
+        }
+    }
+
+    async function initApp() {
+        loadSites();
+        renderSiteList();
+        initCharts();
+        await loadTodayData();
+        subscribeRealtime();
+    }
+
+    // Coba auto-connect saat halaman dimuat
+    tryAutoConnect();
+    </script>
+</body>
+</html>
